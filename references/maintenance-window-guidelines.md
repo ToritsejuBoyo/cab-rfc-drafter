@@ -39,3 +39,4 @@ The validation engine evaluates temporal metrics against the following constrain
 | **Headroom Buffer** | $(T_{\text{impl}} + T_{\text{rollback}}) > 0.85 \times T_{\text{window}}$ | **WARNING: Tight Buffer.** Less than 15% contingency reserve. |
 | **Cutoff Viability** | $\text{Cutoff Time} \le \text{Start Time} + T_{\text{impl}}$ | **CRITICAL DEFECT:** Implementation steps cannot complete before cutoff. |
 | **Rollback Duration** | $T_{\text{rollback}} == 0$ OR missing | **CRITICAL DEFECT:** Rollback time unaccounted for. |
+

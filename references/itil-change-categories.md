@@ -42,3 +42,4 @@ To pass CAB review, every RFC must fulfill the following criteria:
 
 ### 5. Post-Change Verification Plan
 - Must verify both technical integrity (service daemon active, ports listening) and functional integrity (end-user login, synthetic transaction, data write/read).
+

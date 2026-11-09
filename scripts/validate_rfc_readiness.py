@@ -75,7 +75,7 @@ def sanitize_text(text: str) -> str:
     # Mask email addresses
     def _replace_email(m):
         addr = m.group(0)
-        if addr.startswith("eng-") and addr.endswith("@corp.example.internal"):
+        if addr.startswith("eng-") and "@" in addr and addr.endswith(".corp.example.internal"):
             return addr
         h = hashlib.sha256(addr.encode()).hexdigest()[:6]
         return f"eng-{h}@corp.example.internal"
@@ -87,7 +87,7 @@ def sanitize_text(text: str) -> str:
     ipv4_pattern = r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b"
     text = re.sub(ipv4_pattern, lambda m: sanitize_ip(m.group(0)), text)
 
-    # Mask standard FQDNs ending in internal or corp
+    # Mask standard FQDNs ending in internal, corp, local, lan not preceded by @
     def _replace_fqdn(m):
         fqdn = m.group(0)
         if fqdn.startswith("node-") and fqdn.endswith(".corp.example.internal"):
@@ -95,14 +95,16 @@ def sanitize_text(text: str) -> str:
         h = hashlib.sha256(fqdn.encode()).hexdigest()[:6]
         return f"node-{h}.corp.example.internal"
 
-    fqdn_pattern = r"\b[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*\.(?:corp|local|internal|lan)\b"
+    fqdn_pattern = r"(?<!@)\b[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*\.(?:corp|local|internal|lan)\b"
     text = re.sub(fqdn_pattern, _replace_fqdn, text)
 
     return text
 
 
-def sanitize_bundle(data: Any) -> Any:
-    """Recursively sanitize dictionary or list telemetry data."""
+def sanitize_bundle(data: Any, max_depth: int = 100) -> Any:
+    """Recursively sanitize dictionary or list telemetry data with depth safety guard."""
+    if max_depth <= 0:
+        return "<MAX_RECURSION_DEPTH_EXCEEDED>"
     if isinstance(data, dict):
         sanitized = {}
         for k, v in data.items():
@@ -117,10 +119,10 @@ def sanitize_bundle(data: Any) -> Any:
                 else:
                     sanitized[k] = v
             else:
-                sanitized[k] = sanitize_bundle(v)
+                sanitized[k] = sanitize_bundle(v, max_depth - 1)
         return sanitized
     elif isinstance(data, list):
-        return [sanitize_bundle(item) for item in data]
+        return [sanitize_bundle(item, max_depth - 1) for item in data]
     elif isinstance(data, str):
         return sanitize_text(data)
     else:
@@ -130,7 +132,12 @@ def sanitize_bundle(data: Any) -> Any:
 def parse_duration_minutes(val: Any) -> int:
     """Extract integer minutes from integers, floats, or strings like '45 mins' or '2h'."""
     if isinstance(val, (int, float)):
-        return max(0, int(val))
+        if math.isnan(val) or math.isinf(val):
+            return 0
+        try:
+            return max(0, int(val))
+        except (OverflowError, ValueError):
+            return 0
     if not val or not isinstance(val, str):
         return 0
 
@@ -142,17 +149,32 @@ def parse_duration_minutes(val: Any) -> int:
     # Check for hours e.g. "2h" or "2 hours"
     m_h = re.search(r"(-?\d+(?:\.\d+)?)\s*(?:h|hr|hour|hours)", s)
     if m_h:
-        return max(0, int(float(m_h.group(1)) * 60))
+        try:
+            val_h = float(m_h.group(1))
+            if math.isnan(val_h) or math.isinf(val_h):
+                return 0
+            return max(0, int(val_h * 60))
+        except (OverflowError, ValueError):
+            return 0
 
     # Check for minutes e.g. "45m" or "45 mins"
     m_m = re.search(r"(-?\d+(?:\.\d+)?)\s*(?:m|min|mins|minute|minutes)", s)
     if m_m:
-        return max(0, int(float(m_m.group(1))))
+        try:
+            val_m = float(m_m.group(1))
+            if math.isnan(val_m) or math.isinf(val_m):
+                return 0
+            return max(0, int(val_m))
+        except (OverflowError, ValueError):
+            return 0
 
     # Direct integer string
     try:
-        return max(0, int(float(s)))
-    except (ValueError, TypeError):
+        val_f = float(s)
+        if math.isnan(val_f) or math.isinf(val_f):
+            return 0
+        return max(0, int(val_f))
+    except (ValueError, TypeError, OverflowError):
         return 0
 
 
@@ -224,10 +246,15 @@ def calculate_risk(data: Dict[str, Any]) -> Dict[str, Any]:
         escalations.append("Automatic High-Risk: Zero documented rollback commands.")
         total_score = max(total_score, 10)
 
-    # Check for destructive SQL
-    impl_text = json.dumps(data.get("implementation_steps", [])).lower()
-    if any(kw in impl_text for kw in ["drop table", "drop database", "truncate", "rm -rf /"]):
-        escalations.append("Automatic High-Risk: Destructive command detected in implementation plan.")
+    # Check for destructive SQL or OS commands
+    scan_fields = [
+        str(data.get("title", "")),
+        str(data.get("business_justification", "")),
+        json.dumps(data.get("implementation_steps", []))
+    ]
+    full_text = " ".join(scan_fields).lower()
+    if any(kw in full_text for kw in ["drop table", "drop database", "truncate table", "truncate", "rm -rf /"]):
+        escalations.append("Automatic High-Risk: Destructive command detected in RFC package.")
         total_score = max(total_score, 10)
 
     if total_score <= 6:
@@ -256,11 +283,43 @@ def calculate_risk(data: Dict[str, Any]) -> Dict[str, Any]:
 
 def validate_timing_headroom(data: Dict[str, Any]) -> Dict[str, Any]:
     """Calculate implementation time, rollback time, and window feasibility."""
+    if not isinstance(data, dict):
+        return {
+            "window_duration_minutes": 0,
+            "total_implementation_minutes": 0,
+            "rollback_duration_minutes": 0,
+            "total_active_minutes": 0,
+            "headroom_buffer_minutes": 0,
+            "headroom_buffer_pct": 0.0,
+            "decision_cutoff_point": None,
+            "timing_feasible": False,
+            "timing_defects": ["Non-dictionary input payload."]
+        }
+
     window = data.get("scheduled_window", {})
     if not isinstance(window, dict):
         window = {}
 
+    defects = []
     window_duration = parse_duration_minutes(window.get("duration_minutes", 0))
+
+    # Evaluate start_time and end_time if provided
+    start_str = window.get("start_time")
+    end_str = window.get("end_time")
+    if start_str and end_str and isinstance(start_str, str) and isinstance(end_str, str):
+        try:
+            # Normalize ISO string with Z to +00:00 for fromisoformat
+            s_iso = start_str.replace("Z", "+00:00")
+            e_iso = end_str.replace("Z", "+00:00")
+            t_start = datetime.datetime.fromisoformat(s_iso)
+            t_end = datetime.datetime.fromisoformat(e_iso)
+            delta_mins = int((t_end - t_start).total_seconds() / 60)
+            if delta_mins <= 0:
+                defects.append(f"Temporal Paradox: Maintenance window end time ({end_str}) is earlier than or equal to start time ({start_str}).")
+            elif window_duration == 0:
+                window_duration = delta_mins
+        except Exception:
+            pass
 
     # Calculate implementation time
     impl_steps = data.get("implementation_steps", [])
@@ -270,7 +329,7 @@ def validate_timing_headroom(data: Dict[str, Any]) -> Dict[str, Any]:
             if isinstance(s, dict):
                 total_impl_mins += parse_duration_minutes(s.get("duration_minutes", 0))
             elif isinstance(s, (int, float)):
-                total_impl_mins += int(s)
+                total_impl_mins += parse_duration_minutes(s)
 
     # Calculate rollback duration
     rollback = data.get("rollback_plan", {})
@@ -282,8 +341,7 @@ def validate_timing_headroom(data: Dict[str, Any]) -> Dict[str, Any]:
     headroom_mins = window_duration - total_active_mins
     headroom_pct = round((headroom_mins / window_duration) * 100, 1) if window_duration > 0 else 0.0
 
-    defects = []
-    if window_duration <= 0:
+    if window_duration <= 0 and not any("Temporal Paradox" in d for d in defects):
         defects.append("Maintenance window duration is 0 or not specified.")
     elif total_active_mins > window_duration:
         defects.append(
@@ -311,7 +369,7 @@ def validate_timing_headroom(data: Dict[str, Any]) -> Dict[str, Any]:
         "headroom_buffer_minutes": headroom_mins,
         "headroom_buffer_pct": headroom_pct,
         "decision_cutoff_point": cutoff,
-        "timing_feasible": total_active_mins <= window_duration and window_duration > 0,
+        "timing_feasible": total_active_mins <= window_duration and window_duration > 0 and not any("Temporal Paradox" in d for d in defects),
         "timing_defects": defects
     }
 
@@ -371,6 +429,35 @@ def audit_procedural_quality(data: Dict[str, Any]) -> List[str]:
 
 def audit_rfc(data: Dict[str, Any]) -> Dict[str, Any]:
     """Perform full 5-layer RFC readiness audit and scoring."""
+    if not isinstance(data, dict):
+        return {
+            "rfc_title": "Invalid Telemetry Payload",
+            "readiness_score_pct": 0.0,
+            "cab_ready": False,
+            "recommendation": "Rejected: Root payload must be a valid JSON dictionary.",
+            "missing_mandatory_sections": list(MANDATORY_SECTIONS),
+            "risk_assessment": {
+                "dimensions": {"scope_score": 3, "redundancy_score": 3, "reversibility_score": 3, "precedent_score": 3},
+                "total_risk_score": 12,
+                "risk_tier": "HIGH",
+                "recommended_category": "MAJOR",
+                "escalations": ["Invalid Payload: Root object is not a dictionary."]
+            },
+            "maintenance_window_audit": {
+                "window_duration_minutes": 0,
+                "total_implementation_minutes": 0,
+                "rollback_duration_minutes": 0,
+                "total_active_minutes": 0,
+                "headroom_buffer_minutes": 0,
+                "headroom_buffer_pct": 0.0,
+                "decision_cutoff_point": None,
+                "timing_feasible": False,
+                "timing_defects": ["Non-dictionary input provided."]
+            },
+            "procedural_defects": ["Non-dictionary root payload."],
+            "all_defects": [f"Root payload must be a valid dictionary, received {type(data).__name__}."]
+        }
+
     title = data.get("title", "Untitled Request for Change")
     missing_sections = []
 
