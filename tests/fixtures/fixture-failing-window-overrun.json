@@ -1,0 +1,71 @@
+{
+  "rfc_id": "RFC-2026-11-053",
+  "title": "SAP S/4HANA Enterprise Kernel and Database Migration",
+  "business_justification": "Upgrade core ERP system kernel to patch memory leak defect.",
+  "change_category": "MAJOR",
+  "lead_engineer": "eng-erp@corp.example.internal",
+  "scheduled_window": {
+    "start_time": "2026-11-20T00:00:00Z",
+    "duration_minutes": 120
+  },
+  "systems_impacted": [
+    "sap-app-prod01.corp.example.internal",
+    "sap-hana-db01.corp.example.internal"
+  ],
+  "risk_assessment": {
+    "scope_score": 3,
+    "redundancy_score": 2,
+    "reversibility_score": 3,
+    "precedent_score": 2
+  },
+  "pre_checks": [
+    {
+      "description": "Capture pre-change HANA database snapshot",
+      "command": "hdbsql -U BACKUP 'BACKUP DATA SNAPSHOT TO FILE'"
+    }
+  ],
+  "implementation_steps": [
+    {
+      "step_number": 1,
+      "action": "Stop SAP application server daemons",
+      "command": "stopsap ALL",
+      "duration_minutes": 20
+    },
+    {
+      "step_number": 2,
+      "action": "Apply kernel patches and update binaries",
+      "command": "SAPCAR -xvf KERNEL.SAR -R /sapmnt/SYS/exe/uc/linuxx86_64",
+      "duration_minutes": 50
+    },
+    {
+      "step_number": 3,
+      "action": "Start SAP instances and compile ABAP programs",
+      "command": "startsap ALL && sappfpar check",
+      "duration_minutes": 20
+    }
+  ],
+  "rollback_plan": {
+    "trigger_conditions": "SAP startup failure or syntax errors in core transactions post-boot.",
+    "decision_cutoff_point": "2026-11-20T01:15:00Z",
+    "duration_minutes": 45,
+    "commands": [
+      {
+        "step": 1,
+        "action": "Restore original kernel binaries from backup directory",
+        "command": "cp -r /sapmnt/backup_kernel/* /sapmnt/SYS/exe/uc/linuxx86_64/"
+      },
+      {
+        "step": 2,
+        "action": "Restart SAP stack with previous kernel",
+        "command": "startsap ALL"
+      }
+    ]
+  },
+  "verification_plan": [
+    {
+      "test_number": 1,
+      "description": "Check dispatcher and work process status",
+      "command": "dpmon pf=/sapmnt/SYS/profile/DEFAULT.PFL"
+    }
+  ]
+}

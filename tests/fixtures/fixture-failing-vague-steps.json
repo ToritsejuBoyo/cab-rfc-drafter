@@ -1,0 +1,33 @@
+{
+  "rfc_id": "RFC-2026-11-055",
+  "title": "Windows Domain Controller Cumulative Security Patching",
+  "business_justification": "Apply monthly security updates to Active Directory domain controllers.",
+  "change_category": "NORMAL",
+  "lead_engineer": "eng-wintel@corp.example.internal",
+  "scheduled_window": {
+    "start_time": "2026-11-22T02:00:00Z",
+    "duration_minutes": 60
+  },
+  "systems_impacted": [
+    "dc01.corp.example.internal"
+  ],
+  "risk_assessment": {
+    "scope_score": 3,
+    "redundancy_score": 2,
+    "reversibility_score": 2,
+    "precedent_score": 1
+  },
+  "pre_checks": [],
+  "implementation_steps": [
+    "reboot",
+    "apply config",
+    "test system"
+  ],
+  "rollback_plan": {
+    "trigger_conditions": "",
+    "decision_cutoff_point": "",
+    "duration_minutes": 15,
+    "commands": []
+  },
+  "verification_plan": []
+}

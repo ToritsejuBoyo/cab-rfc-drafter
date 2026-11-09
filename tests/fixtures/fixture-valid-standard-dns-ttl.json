@@ -1,0 +1,53 @@
+{
+  "rfc_id": "RFC-2026-11-056",
+  "title": "DNS Record TTL Reduction for Staging Service Cutover",
+  "business_justification": "Lower TTL from 86400 to 300 seconds in advance of upcoming application migration.",
+  "change_category": "STANDARD",
+  "lead_engineer": "eng-dns@corp.example.internal",
+  "scheduled_window": {
+    "start_time": "2026-11-16T10:00:00Z",
+    "duration_minutes": 30
+  },
+  "systems_impacted": [
+    "dns-auth01.corp.example.internal"
+  ],
+  "risk_assessment": {
+    "scope_score": 1,
+    "redundancy_score": 1,
+    "reversibility_score": 1,
+    "precedent_score": 1
+  },
+  "pre_checks": [
+    {
+      "description": "Query current SOA and A record TTL via local resolver",
+      "command": "dig +nocmd staging.corp.example.internal +noall +answer"
+    }
+  ],
+  "implementation_steps": [
+    {
+      "step_number": 1,
+      "action": "Update zone file record TTL to 300 seconds and increment SOA serial",
+      "command": "sed -i 's/86400/300/' /etc/bind/zones/db.corp.example.internal && rndc reload",
+      "duration_minutes": 5
+    }
+  ],
+  "rollback_plan": {
+    "trigger_conditions": "DNS zone reload syntax error or SERVFAIL returned from local resolver.",
+    "decision_cutoff_point": "2026-11-16T10:15:00Z",
+    "duration_minutes": 5,
+    "commands": [
+      {
+        "step": 1,
+        "action": "Revert zone file to backup copy and reload bind daemon",
+        "command": "cp /etc/bind/zones/db.corp.example.internal.bak /etc/bind/zones/db.corp.example.internal && rndc reload"
+      }
+    ]
+  },
+  "verification_plan": [
+    {
+      "test_number": 1,
+      "description": "Confirm updated 300s TTL is returned from authoritative nameserver",
+      "command": "dig @192.0.2.1 staging.corp.example.internal +noall +answer | grep 300"
+    }
+  ]
+}

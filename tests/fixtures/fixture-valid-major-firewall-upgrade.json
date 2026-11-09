@@ -1,0 +1,117 @@
+{
+  "rfc_id": "RFC-2026-11-049",
+  "title": "Core Edge Firewall HA Firmware Upgrade from 7.0.12 to 7.2.6",
+  "business_justification": "Remediates critical CVE-2026-4428 zero-day authentication bypass vulnerability on edge perimeter.",
+  "change_category": "MAJOR",
+  "lead_engineer": "eng-secops@corp.example.internal",
+  "peer_reviewer": "eng-netlead@corp.example.internal",
+  "service_owner": "sec-director@corp.example.internal",
+  "cab_chair": "it-change-manager@corp.example.internal",
+  "executing_team": "Network & Perimeter Security Engineering",
+  "scheduled_window": {
+    "start_time": "2026-11-15T01:00:00Z",
+    "end_time": "2026-11-15T03:00:00Z",
+    "duration_minutes": 120,
+    "timezone": "UTC"
+  },
+  "systems_impacted": [
+    "fw-edge-node01.corp.example.internal (Primary)",
+    "fw-edge-node02.corp.example.internal (Secondary Standby)",
+    "Corporate Edge IPsec VPN Gateway"
+  ],
+  "risk_assessment": {
+    "scope_score": 3,
+    "redundancy_score": 1,
+    "reversibility_score": 1,
+    "precedent_score": 2,
+    "redundancy_notes": "Active-passive stateful HA cluster with zero-loss session failover.",
+    "precedent_notes": "Upgraded secondary staging firewall successfully on Nov 10."
+  },
+  "pre_checks": [
+    {
+      "description": "Capture active BGP neighbor sessions and routes count",
+      "command": "get router info bgp summary",
+      "target_host": "fw-edge-node01"
+    },
+    {
+      "description": "Verify HA cluster synchronization status and checksums",
+      "command": "diagnose sys ha checksum cluster",
+      "target_host": "fw-edge-node01"
+    },
+    {
+      "description": "Create offline system configuration backup to secure TFTP",
+      "command": "execute backup config tftp fw-backup-pre-726.cfg 192.0.2.50",
+      "target_host": "fw-edge-node01"
+    }
+  ],
+  "implementation_steps": [
+    {
+      "step_number": 1,
+      "action": "Upload firmware image to standby node02 and verify SHA-256 hash",
+      "command": "execute restore image tftp fortios-7.2.6.bin 192.0.2.50",
+      "executing_engineer": "eng-secops",
+      "duration_minutes": 15,
+      "target_host": "fw-edge-node02"
+    },
+    {
+      "step_number": 2,
+      "action": "Reboot standby node02 into 7.2.6 and monitor post-boot HA rejoin",
+      "command": "execute reboot",
+      "executing_engineer": "eng-secops",
+      "duration_minutes": 15,
+      "target_host": "fw-edge-node02"
+    },
+    {
+      "step_number": 3,
+      "action": "Initiate graceful HA failover to transfer active traffic to node02",
+      "command": "diagnose sys ha reset-uptime",
+      "executing_engineer": "eng-secops",
+      "duration_minutes": 10,
+      "target_host": "fw-edge-node01"
+    },
+    {
+      "step_number": 4,
+      "action": "Upgrade node01 to 7.2.6 and confirm cluster re-synchronization",
+      "command": "execute restore image tftp fortios-7.2.6.bin 192.0.2.50",
+      "executing_engineer": "eng-secops",
+      "duration_minutes": 20,
+      "target_host": "fw-edge-node01"
+    }
+  ],
+  "rollback_plan": {
+    "trigger_conditions": "Continuous ping packet loss > 5% for > 3 minutes, IPsec tunnels fail to renegotiate, or BGP route flapping detected on node02.",
+    "decision_cutoff_point": "2026-11-15T02:15:00Z (45 mins prior to window close)",
+    "duration_minutes": 20,
+    "commands": [
+      {
+        "step": 1,
+        "action": "Force cluster failback immediately to node01 running verified 7.0.12",
+        "command": "diagnose sys ha reset-uptime",
+        "target_host": "fw-edge-node02"
+      },
+      {
+        "step": 2,
+        "action": "Restore pre-change config from TFTP if state is inconsistent",
+        "command": "execute restore config tftp fw-backup-pre-726.cfg 192.0.2.50",
+        "target_host": "fw-edge-node02"
+      }
+    ]
+  },
+  "verification_plan": [
+    {
+      "test_number": 1,
+      "description": "Verify HA cluster state and full sync checksum match",
+      "command": "diagnose sys ha status"
+    },
+    {
+      "test_number": 2,
+      "description": "Confirm all 24 branch IPsec VPN tunnels are established (Phase 2 UP)",
+      "command": "diagnose vpn tunnel list | grep 'status=up'"
+    },
+    {
+      "test_number": 3,
+      "description": "Execute synthetic HTTP/HTTPS external connectivity tests from DMZ web cluster",
+      "command": "curl -Iv --connect-timeout 5 https://login.microsoftonline.com"
+    }
+  ]
+}

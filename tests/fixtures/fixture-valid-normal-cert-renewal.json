@@ -1,0 +1,66 @@
+{
+  "rfc_id": "RFC-2026-11-054",
+  "title": "Wildcard SSL/TLS Certificate Renewal for api.corp.example.internal",
+  "business_justification": "Renew public SSL/TLS certificate prior to expiration on Nov 25.",
+  "change_category": "NORMAL",
+  "lead_engineer": "eng-pki@corp.example.internal",
+  "scheduled_window": {
+    "start_time": "2026-11-17T03:00:00Z",
+    "duration_minutes": 60
+  },
+  "systems_impacted": [
+    "lb-edge-vip01.corp.example.internal",
+    "lb-edge-vip02.corp.example.internal"
+  ],
+  "risk_assessment": {
+    "scope_score": 2,
+    "redundancy_score": 1,
+    "reversibility_score": 1,
+    "precedent_score": 2
+  },
+  "pre_checks": [
+    {
+      "description": "Inspect existing certificate expiration date and serial number",
+      "command": "echo | openssl s_client -servername api.corp.example.internal -connect 192.0.2.10:443 2>/dev/null | openssl x509 -noout -dates"
+    }
+  ],
+  "implementation_steps": [
+    {
+      "step_number": 1,
+      "action": "Upload new certificate and intermediate CA chain to Load Balancer standby node",
+      "command": "scp wildcard_2026.crt certs@lb-edge-vip02:/etc/ssl/certs/",
+      "duration_minutes": 5
+    },
+    {
+      "step_number": 2,
+      "action": "Bind certificate to HTTPS listener profile on standby node and test",
+      "command": "nginx -t -c /etc/nginx/lb-staging.conf",
+      "duration_minutes": 5
+    },
+    {
+      "step_number": 3,
+      "action": "Perform graceful traffic shift to updated node and repeat binding on primary node",
+      "command": "systemctl reload nginx",
+      "duration_minutes": 10
+    }
+  ],
+  "rollback_plan": {
+    "trigger_conditions": "TLS handshake error rate > 0.1% or certificate chain validation errors.",
+    "decision_cutoff_point": "2026-11-17T03:30:00Z",
+    "duration_minutes": 10,
+    "commands": [
+      {
+        "step": 1,
+        "action": "Re-point HTTPS listener profile to previous certificate file",
+        "command": "ln -sfn /etc/ssl/certs/wildcard_2025.crt /etc/ssl/certs/active.crt && systemctl reload nginx"
+      }
+    ]
+  },
+  "verification_plan": [
+    {
+      "test_number": 1,
+      "description": "Verify external TLS handshake and new expiry date",
+      "command": "echo | openssl s_client -servername api.corp.example.internal -connect 192.0.2.10:443 2>/dev/null | openssl x509 -noout -dates"
+    }
+  ]
+}

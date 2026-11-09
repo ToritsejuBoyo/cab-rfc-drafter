@@ -1,0 +1,42 @@
+{
+  "rfc_id": "RFC-2026-11-052",
+  "title": "PostgreSQL User Table Index Restructuring and Reindexing",
+  "business_justification": "Optimize query latency on customer lookup endpoint under peak load.",
+  "change_category": "NORMAL",
+  "lead_engineer": "eng-dba@corp.example.internal",
+  "scheduled_window": {
+    "start_time": "2026-11-18T02:00:00Z",
+    "duration_minutes": 60
+  },
+  "systems_impacted": [
+    "db-prod-pg01.corp.example.internal"
+  ],
+  "risk_assessment": {
+    "scope_score": 2,
+    "redundancy_score": 2,
+    "reversibility_score": 3,
+    "precedent_score": 1
+  },
+  "pre_checks": [
+    {
+      "description": "Check replication lag to standby replica",
+      "command": "SELECT client_addr, state, replay_lag FROM pg_stat_replication;"
+    }
+  ],
+  "implementation_steps": [
+    {
+      "step_number": 1,
+      "action": "Execute concurrent reindex on users table",
+      "command": "REINDEX TABLE CONCURRENTLY users;",
+      "duration_minutes": 45
+    }
+  ],
+  "rollback_plan": {},
+  "verification_plan": [
+    {
+      "test_number": 1,
+      "description": "Check index status in pg_stat_user_indexes",
+      "command": "SELECT indexrelname, idx_scan FROM pg_stat_user_indexes WHERE relname='users';"
+    }
+  ]
+}
