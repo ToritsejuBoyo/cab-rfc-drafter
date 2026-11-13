@@ -45,13 +45,13 @@ def check_zero_dependencies():
                     if isinstance(node, ast.Import):
                         for alias in node.names:
                             base_pkg = alias.name.split(".")[0]
-                            if base_pkg not in allowed_modules and base_pkg not in ["validate_rfc_readiness", "draft_cab_rfc"]:
+                            if base_pkg not in allowed_modules and base_pkg not in ["validate_rfc_readiness", "draft_cab_rfc", "sanitizer"]:
                                 print(f"[FAIL] Unauthorized import '{base_pkg}' in {file}")
                                 return False
                     elif isinstance(node, ast.ImportFrom):
                         if node.module:
                             base_pkg = node.module.split(".")[0]
-                            if base_pkg not in allowed_modules and base_pkg not in ["validate_rfc_readiness", "draft_cab_rfc"]:
+                            if base_pkg not in allowed_modules and base_pkg not in ["validate_rfc_readiness", "draft_cab_rfc", "sanitizer"]:
                                 print(f"[FAIL] Unauthorized from-import '{base_pkg}' in {file}")
                                 return False
     print("  [+] PASS: Rule 3 compliance (Zero external dependencies across all scripts).")
