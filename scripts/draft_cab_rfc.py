@@ -11,12 +11,28 @@ Includes client-side data sanitization (--sanitize).
 
 import argparse
 import datetime
+import os
 import hashlib
 import json
 import sys
 from typing import Any, Dict, List, Optional
 
 from validate_rfc_readiness import audit_rfc, format_markdown_report, sanitize_bundle
+
+# ---------------------------------------------------------------------------
+# Shared residual sanitization pass (vendored: scripts/sanitizer.py).
+# Applied to rendered output rather than to the input bundle: scrubbing the bundle
+# before analysis would strip values the analysis reads and could change the
+# verdict. See tests/sanitizer_conformance_test.py for the contract.
+# ---------------------------------------------------------------------------
+try:
+    from sanitizer import residual_scrub as _residual_scrub
+except ImportError:  # pragma: no cover - direct execution from another cwd
+    import os as _os
+    import sys as _sys
+    _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+    from sanitizer import residual_scrub as _residual_scrub
+
 
 
 def generate_sample_rfc() -> Dict[str, Any]:
@@ -246,16 +262,48 @@ def main():
             print(f"Sample RFC saved to: {args.output}")
         else:
             print(out)
-        return
+        return 0
 
     if args.interactive:
         rfc_data = interactive_interview()
     elif args.input:
-        with open(args.input, "r", encoding="utf-8", errors="ignore") as f:
-            rfc_data = json.load(f)
+        # Operators and agents routinely point this at the wrong thing: an empty
+        # export, a directory, a pasted fragment, a PDF. Each must produce a clear
+        # one-line diagnostic and a non-zero exit, never a Python traceback.
+        if os.path.isdir(args.input):
+            sys.stderr.write("Error: input path is a directory, not an RFC JSON file: "
+                             "%s\n" % args.input)
+            return 1
+        try:
+            with open(args.input, "r", encoding="utf-8", errors="replace") as f:
+                raw_text = f.read()
+        except FileNotFoundError:
+            sys.stderr.write("Error: input file not found: %s\n" % args.input)
+            return 1
+        except PermissionError:
+            sys.stderr.write("Error: permission denied reading: %s\n" % args.input)
+            return 1
+        except OSError as exc:
+            sys.stderr.write("Error: could not read input: %s\n" % exc)
+            return 1
+
+        if not raw_text.strip():
+            sys.stderr.write("Error: input file is empty. Supply an RFC JSON payload, "
+                             "or run with --sample to print a template.\n")
+            return 1
+        try:
+            rfc_data = json.loads(raw_text)
+        except (ValueError, RecursionError) as exc:
+            sys.stderr.write("Error: input is not valid JSON (%s). Run with --sample "
+                             "to see the expected structure.\n" % exc)
+            return 1
+        if not isinstance(rfc_data, dict):
+            sys.stderr.write("Error: input JSON must be an object describing one RFC, "
+                             "not %s.\n" % type(rfc_data).__name__)
+            return 1
     else:
         parser.print_help()
-        sys.exit(1)
+        return 2
 
     if args.sanitize:
         rfc_data = sanitize_bundle(rfc_data)
@@ -264,9 +312,19 @@ def main():
     audit = audit_rfc(rfc_data)
     md_report = format_markdown_report(audit, rfc_data)
 
+    if args.sanitize:
+        md_report = _residual_scrub(md_report)
+
     if args.output:
+        # The JSON artifact must get the same residual pass as the markdown report.
+        # sanitize_bundle() only masks the fields it knows about, so a credential
+        # pasted into a free-text RFC field (justification, rollback steps) would
+        # otherwise survive into the written file while being redacted in the report.
+        serialized = json.dumps(rfc_data, indent=2)
+        if args.sanitize:
+            serialized = _residual_scrub(serialized)
         with open(args.output, "w", encoding="utf-8") as f:
-            json.dump(rfc_data, f, indent=2)
+            f.write(serialized)
         print(f"RFC package written to: {args.output}")
 
     if args.report:
@@ -280,5 +338,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)
 

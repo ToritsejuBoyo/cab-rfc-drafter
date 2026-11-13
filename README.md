@@ -2,6 +2,13 @@
 
 ![cab-rfc-drafter Terminal Demo](assets/demo.gif)
 
+[![tests](https://github.com/ToritsejuBoyo/cab-rfc-drafter/actions/workflows/tests.yml/badge.svg)](https://github.com/ToritsejuBoyo/cab-rfc-drafter/actions/workflows/tests.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-green.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)]()
+[![Dependencies](https://img.shields.io/badge/dependencies-zero%20(stdlib%20only)-brightgreen.svg)](CONTRIBUTING.md)
+[![Security](https://img.shields.io/badge/security-read--only%20%7C%20no%20egress-informational.svg)](SECURITY.md)
+[![Standard](https://img.shields.io/badge/standard-agentskills.io-blueviolet.svg)](https://agentskills.io)
+
 An ITIL 4-aligned Change Enablement AI Agent Skill paired with a deterministic validation engine. Conducts structured change management interviews, challenges missing dependencies and test gaps, calculates objective 4-dimension risk scores, audits maintenance window feasibility, and outputs audit-compliant Request for Change (RFC) packages ready for Change Advisory Board (CAB) approval.
 
 ---
